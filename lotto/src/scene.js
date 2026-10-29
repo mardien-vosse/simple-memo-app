@@ -447,17 +447,17 @@ export function buildScene(renderer, machine) {
 
   /* ---------------------------------------------------------- 유리컵 */
   {
-    const outer = [[0, 0], [0.03, 0.002], [0.047, 0.012], [0.055, 0.03], [0.058, 0.055], [0.059, 0.07]];
-    const inner = [[0.056, 0.07], [0.055, 0.055], [0.052, 0.031], [0.044, 0.015], [0.028, 0.006], [0, 0.004]];
+    // 얕은 볼: 테두리(높이 3.5cm)가 구슬 중심보다 낮아 번호를 가리지 않음
+    const outer = [[0, 0], [0.03, 0.002], [0.047, 0.009], [0.056, 0.02], [0.061, 0.035]];
+    const inner = [[0.058, 0.035], [0.053, 0.021], [0.045, 0.011], [0.028, 0.005], [0, 0.004]];
     const prof = outer.concat(inner).map((p) => new THREE.Vector2(p[0], p[1]));
     const cupG = new THREE.LatheGeometry(prof, 64);
     const standG = new THREE.LatheGeometry([[0, 0], [0.045, 0], [0.048, 0.006], [0.03, 0.011], [0.012, 0.016], [0.011, 0.03], [0.022, 0.035], [0, 0.036]].map((p) => new THREE.Vector2(p[0], p[1])), 40);
-    const ringG = new THREE.TorusGeometry(0.0598, 0.0026, 10, 64).rotateX(Math.PI / 2);
+    const ringG = new THREE.TorusGeometry(0.0598, 0.0024, 10, 64).rotateX(Math.PI / 2);
     L.cupX.forEach((cx) => {
       const st = mesh(standG, M.brassFine); st.position.set(cx, L.trayTop, L.cupZ); scene.add(st);
       const cup = mesh(cupG, M.glassThick, { cast: false, receive: false }); cup.position.set(cx, L.cupBaseY, L.cupZ); scene.add(cup);
-      const ring = mesh(ringG, M.brassFine); ring.position.set(cx, L.cupBaseY + 0.0695, L.cupZ); scene.add(ring);
-      const band = mesh(new THREE.CylinderGeometry(0.0485, 0.044, 0.008, 48, 1, true), M.brassFine); band.position.set(cx, L.cupBaseY + 0.016, L.cupZ); scene.add(band);
+      const ring = mesh(ringG, M.brassFine); ring.position.set(cx, L.cupBaseY + 0.0348, L.cupZ); scene.add(ring);
     });
   }
 

@@ -349,13 +349,13 @@
   Machine.prototype.step = function (dt) {
     this.t += dt;
     // 송풍기 회전수 (관성)
-    const up = 0.55, down = 0.45;
+    const up = 1.1, down = 0.6;
     if (this.blower < this.blowerTarget) this.blower = Math.min(this.blowerTarget, this.blower + up * dt);
     else if (this.blower > this.blowerTarget) this.blower = Math.max(this.blowerTarget, this.blower - down * dt);
     if (this.gateOpen) {
       this.gateT += dt;
       // 오래 기다리면 흡인 보조를 아주 천천히 키움 (구슬 종류와 무관)
-      this.pickAssist = Math.min(1, Math.max(0, (this.gateT - 2.5) / 10));
+      this.pickAssist = Math.min(1, Math.max(0, (this.gateT - 0.8) / 4));
     }
 
     this._updateAir(dt);

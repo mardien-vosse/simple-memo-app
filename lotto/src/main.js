@@ -75,7 +75,6 @@ function spawnTraveler(b) {
     pos: m.position.clone(), vel: new THREE.Vector3(), off: m.position.clone().sub(curve.getPointAt(0)),
     still: 0, wait: 0, restT: 0,
   };
-  rig.stoppers[tr.cup].target = 1;
   travelers.push(tr);
   return tr;
 }
@@ -120,6 +119,8 @@ function updateTraveler(tr, dt) {
     tr.pos.x += tr.vel.x * dt;
     if (tr.pos.x > L.bumperX - r) { tr.pos.x = L.bumperX - r; tr.vel.x = -tr.vel.x * 0.4; sound.tick(1, 3); }
     const st = rig.stoppers[tr.cup];
+    // 앞서 가는 구슬이 이 스토퍼를 지나간 뒤에만 핀을 올림
+    if (st.target === 0 && !travelers.some((o) => o !== tr && o.cup < tr.cup && o.phase !== 'rest' && o.pos.x > st.x - 0.06)) st.target = 1;
     const stopX = st.x + 0.006 + r;
     if (tr.pos.x < stopX) {
       tr.pos.x = stopX;
@@ -154,6 +155,27 @@ function updateTraveler(tr, dt) {
   m.position.copy(tr.pos);
 }
 
+// 레일 위에 구슬이 둘 이상일 때: 1차원 충돌 (같은 질량, 반발계수 0.8)
+function railCollisions() {
+  const r = machine.r, e = 0.8;
+  const on = travelers.filter((t) => t.phase === 'rail' || t.phase === 'open');
+  for (let i = 0; i < on.length; i++) for (let j = i + 1; j < on.length; j++) {
+    const a = on[i], b = on[j], dx = b.pos.x - a.pos.x;
+    if (Math.abs(dx) >= 2 * r) continue;
+    const s = Math.sign(dx) || 1, push = (2 * r - Math.abs(dx)) / 2;
+    if (a.phase === 'open') b.pos.x += s * push * 2; else if (b.phase === 'open') a.pos.x -= s * push * 2;
+    else { a.pos.x -= s * push; b.pos.x += s * push; }
+    const va = a.vel.x, vb = b.vel.x;
+    if ((vb - va) * s < 0) {
+      a.vel.x = (va + vb) / 2 + (e * (vb - va)) / 2; b.vel.x = (va + vb) / 2 - (e * (vb - va)) / 2;
+      if (a.phase === 'open') { b.vel.x = -vb * e; a.vel.x = 0; }
+      if (b.phase === 'open') { a.vel.x = -va * e; b.vel.x = 0; }
+      sound.tick(0, Math.abs(vb - va) * 6);
+    }
+    for (const t of [a, b]) { t.pos.y = railY(t.pos.x); t.mesh.position.copy(t.pos); }
+  }
+}
+
 function animateMechanics(dt) {
   for (const f of rig.flaps) {
     f.open += (f.target - f.open) * Math.min(1, dt * 14);
@@ -168,12 +190,13 @@ function animateMechanics(dt) {
 /* ================================================================ 진행 */
 const ui = {
   status: $('status'), btnBlow: $('btnBlow'), btnPick: $('btnPick'), btnAuto: $('btnAuto'), btnReset: $('btnReset'), btnView: $('btnView'),
-  power: $('power'), powerOut: $('powerOut'), speed: $('speed'), speedOut: $('speedOut'), sound: $('sound'),
+  sound: $('sound'),
   resMain: $('resMain'), resBonus: $('resBonus'), resOrder: $('resOrder'), btnCopy: $('btnCopy'),
   history: $('history'), histCount: $('histCount'), btnClearHist: $('btnClearHist'), debug: $('debug'),
 };
-const game = { blowing: false, auto: false, picking: false, mixClock: 0, drawn: [], done: false, power: 1, timeScale: 1, autoGap: 0 };
-const READY_MIX = 4;
+const game = { blowing: false, auto: false, picking: false, mixClock: 0, drawn: [], done: false, power: 1, autoGap: 0 };   // 바람 세기 100% 고정
+const READY_MIX = 4;        // 첫 뽑기 전 최소 섞는 시간(s) — 이보다 짧으면 바닥 구슬이 유리해짐(검정으로 확인)
+const DELIVERY = 1.7;       // 배출 후 이동(튜브·레일·컵) 진행 배속
 const setStatus = (t) => { ui.status.textContent = t; };
 
 function startBlow() {
@@ -194,7 +217,8 @@ function stopBlow() {
   setStatus(game.done ? '추첨이 끝났습니다. ‘초기화’를 누르면 다시 할 수 있어요.' : '송풍을 멈췄습니다. 구슬이 가라앉습니다.');
 }
 function canPick() {
-  return game.blowing && !game.picking && !game.done && game.drawn.length < 7 && travelers.length === 0 &&
+  return game.blowing && !game.picking && !game.done && game.drawn.length < 7 &&
+    travelers.every((t) => t.phase !== 'tube' && t.phase !== 'fall') &&   // 앞 구슬이 튜브를 빠져나와 레일에 오르면 다음 구슬
     machine.blower > 0.9 * machine.blowerTarget && game.mixClock >= READY_MIX;
 }
 function pickOne() {
@@ -215,11 +239,8 @@ machine.onCapture = (b) => {
 function onLanded(tr) {
   sound.bell(tr.cup === 6 ? 660 : 880 + tr.cup * 40, 0.18, 1.4);
   renderResults();
-  if (game.drawn.length >= 7) finishDraw();
-  else {
-    setStatus(tr.cup < 6 ? `${tr.id}번 구슬이 ${tr.cup + 1}번 컵에 들어갔습니다.` : `보너스 구슬 ${tr.id}번!`);
-    game.mixClock = Math.max(game.mixClock, READY_MIX - 1.5);
-  }
+  if (cupBalls.filter(Boolean).length >= 7) finishDraw();
+  else if (!game.picking) setStatus(tr.cup < 6 ? `${tr.id}번 구슬이 ${tr.cup + 1}번 컵에 들어갔습니다.` : `보너스 구슬 ${tr.id}번!`);
 }
 function finishDraw() {
   game.done = true; game.auto = false;
@@ -292,8 +313,6 @@ ui.btnPick.addEventListener('click', pickOne);
 ui.btnAuto.addEventListener('click', startAuto);
 ui.btnReset.addEventListener('click', resetAll);
 ui.btnView.addEventListener('click', () => { viewAnim = 1; });
-ui.power.addEventListener('input', () => { game.power = ui.power.value / 100; ui.powerOut.textContent = ui.power.value + '%'; if (game.blowing) machine.setBlower(game.power); });
-ui.speed.addEventListener('input', () => { game.timeScale = ui.speed.value / 100; ui.speedOut.textContent = game.timeScale.toFixed(1) + '×'; });
 ui.sound.addEventListener('change', () => sound.setMuted(!ui.sound.checked));
 ui.btnClearHist.addEventListener('click', () => { try { localStorage.removeItem(HKEY); } catch (e) { /* 무시 */ } renderHistory(); });
 ui.btnCopy.addEventListener('click', () => {
@@ -335,7 +354,7 @@ function syncBalls() {
 
 let leverAngle = -0.12, needle = 0, viewAnim = 0;
 function update(dt) {
-  const sdt = dt * game.timeScale;
+  const sdt = dt;
   machine.advance(sdt, 1 / 600, 40);
   syncBalls();
   // 충돌음
@@ -344,13 +363,14 @@ function update(dt) {
   machine.events.length = 0;
 
   if (game.blowing) game.mixClock += sdt;
-  for (const tr of travelers) updateTraveler(tr, sdt);
+  for (const tr of travelers) updateTraveler(tr, sdt * DELIVERY);
+  railCollisions();
   for (let i = travelers.length - 1; i >= 0; i--) if (travelers[i].phase === 'rest' && travelers[i].restT > 1.2) travelers.splice(i, 1);
   // 컵 안에서 쉬는 구슬도 계속 카메라 쪽으로 정렬
   for (const tr of cupBalls) if (tr && !travelers.includes(tr)) updateTraveler(tr, sdt);
-  animateMechanics(sdt);
+  animateMechanics(sdt * DELIVERY);
 
-  if (game.auto && canPick()) { game.autoGap += sdt; if (game.autoGap > (game.drawn.length ? 0.8 : 0)) { game.autoGap = 0; pickOne(); } }
+  if (game.auto && canPick()) { game.autoGap += sdt; if (game.autoGap > (game.drawn.length ? 0.15 : 0)) { game.autoGap = 0; pickOne(); } }
   ui.btnPick.disabled = !canPick() || game.auto;
   if (game.blowing && !game.picking && !game.done && !game.auto && game.drawn.length === 0 && canPick())
     setStatus('충분히 섞였습니다. ‘번호 뽑기’ 또는 Space 로 구슬을 하나씩 꺼내세요.');
