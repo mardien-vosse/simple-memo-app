@@ -268,6 +268,21 @@
     const dz = this.H - Math.abs(z);
     if (dz < bl && uz * z > 0) uz *= Math.max(0, dz / bl);
 
+    // 배출구가 열려 있으면 깔때기·튜브 안의 공기는 송풍 제트가 아니라 튜브 바깥쪽으로 빠져나간다.
+    // (이 처리가 없으면 제트 상승 기류가 깔때기 목에서 구슬을 띄워 배출이 막힌 채 덜컹거린다)
+    if (this.gateOpen) {
+      const d = this.port, s = x * d.dx + y * d.dy;
+      const s1 = this.s0 - 0.6 * this.r;
+      if (s > s1) {
+        const lx = x - s * d.dx, ly = y - s * d.dy;
+        if (lx * lx + ly * ly + z * z < this.mouth * this.mouth * 1.2) {
+          const wgt = Math.min(1, (s - s1) / (0.9 * this.r));
+          const vo = this.vh * 1.1;
+          ux += (d.dx * vo - ux) * wgt; uy += (d.dy * vo - uy) * wgt; uz -= uz * wgt;
+        }
+      }
+    }
+
     // 배출 보조: 게이트가 열린 동안 배출구 쪽으로 약하게 빨아들임
     if (this.gateOpen && this.pickAssist > 0) {
       const px = this.port.dx * R, py = this.port.dy * R;

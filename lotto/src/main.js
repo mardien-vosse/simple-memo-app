@@ -82,6 +82,12 @@ function spawnTraveler(b) {
 function updateTraveler(tr, dt) {
   const L = LAYOUT, r = machine.r, m = tr.mesh;
   const curve = rig.tubeCurve;
+  // 안전장치: 어떤 이유로든 경로 중간에 오래 머물면 다음 단계로 진행 (끼인 채 소리가 계속 나지 않도록)
+  tr.age = (tr.age || 0) + dt;
+  if (tr.phase !== 'rest' && tr.phase !== 'drop' && tr.phase !== 'open') {
+    if (tr.age > 14 && (tr.phase === 'tube' || tr.phase === 'fall')) { tr.phase = 'rail'; tr.pos.set(L.railX1 - 0.03, railY(L.railX1 - 0.03), L.railZ); tr.vel.set(0, 0, 0); }
+    if (tr.age > 20 && tr.phase === 'rail') { tr.pos.x = rig.stoppers[tr.cup].x + 0.006 + r; tr.vel.set(0, 0, 0); rig.stoppers[tr.cup].target = 1; tr.still = 1; }
+  }
   if (tr.phase === 'tube') {
     const u = Math.min(1, tr.s / tr.len);
     const t = curve.getTangentAt(u);
@@ -456,4 +462,4 @@ requestAnimationFrame(() => setTimeout(() => {
 }, 30));
 
 // 테스트용 핸들
-window.__lotto = { tick(sec) { for (let i = 0; i < sec * 60; i++) update(1 / 60); }, simulate(sec, blow) { if (blow) { machine.setBlower(1); machine.blower = 1; game.blowing = true; game.mixClock = 99; } for (let i = 0; i < sec * 600; i++) machine.step(1 / 600); syncBalls(); }, machine, game, travelers, cupBalls, startBlow, pickOne, startAuto, resetAll, camera, controls, get rig() { return rig; } };
+window.__lotto = { tick(sec, dt) { if (typeof dt === 'function') { for (let t = 0; t < sec;) { const d = dt(); update(d); t += d; } } else { const d = dt || 1 / 60; for (let t = 0; t < sec; t += d) update(d); } }, simulate(sec, blow) { if (blow) { machine.setBlower(1); machine.blower = 1; game.blowing = true; game.mixClock = 99; } for (let i = 0; i < sec * 600; i++) machine.step(1 / 600); syncBalls(); }, machine, game, travelers, cupBalls, startBlow, pickOne, startAuto, resetAll, camera, controls, get rig() { return rig; } };
