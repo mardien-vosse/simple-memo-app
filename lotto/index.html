@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#140c07">
+<title>스팀펑크 로또 추첨기</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main id="app">
+  <header id="top">
+    <h1><span class="gear">⚙</span> 스팀펑크 로또 6/45 추첨기</h1>
+    <p id="status" role="status" aria-live="polite">레버를 당기거나 ‘송풍 시작’을 눌러 구슬을 섞어 보세요.</p>
+  </header>
+
+  <div id="stage" aria-label="3D 로또 추첨기">
+    <div class="vignette"></div>
+    <div id="loading">기계를 조립하는 중…</div>
+    <div id="hint">드래그: 시점 회전 · 휠/핀치: 확대 · 레버 클릭: 송풍</div>
+    <div id="debug" hidden></div>
+  </div>
+
+  <section id="panel">
+    <div class="row buttons">
+      <button id="btnBlow" class="brass" type="button">송풍 시작</button>
+      <button id="btnPick" class="brass" type="button" disabled>번호 뽑기</button>
+      <button id="btnAuto" class="brass accent" type="button">자동 추첨</button>
+      <button id="btnReset" class="brass dark" type="button">초기화</button>
+      <button id="btnView" class="brass dark" type="button">시점 초기화</button>
+    </div>
+
+    <div class="row sliders">
+      <label>바람 세기
+        <input id="power" type="range" min="80" max="125" value="100">
+        <output id="powerOut">100%</output>
+      </label>
+      <label>시간 배율
+        <input id="speed" type="range" min="20" max="100" value="100">
+        <output id="speedOut">1.0×</output>
+      </label>
+      <label class="check"><input id="sound" type="checkbox" checked> 소리</label>
+    </div>
+
+    <div id="result" aria-live="polite">
+      <div class="res-line">
+        <span class="res-title">당첨 번호</span>
+        <span id="resMain" class="chips"></span>
+        <span class="plus">+</span>
+        <span id="resBonus" class="chips"></span>
+      </div>
+      <div class="res-line small">
+        <span class="res-title">뽑힌 순서</span>
+        <span id="resOrder" class="order">—</span>
+        <button id="btnCopy" class="mini" type="button" disabled>복사</button>
+      </div>
+    </div>
+
+    <details id="historyBox">
+      <summary>지난 추첨 기록 <span id="histCount"></span></summary>
+      <ol id="history"></ol>
+      <button id="btnClearHist" class="mini" type="button">기록 지우기</button>
+    </details>
+
+    <p class="foot">
+      구슬 45개(지름 8cm, 속이 빈 플라스틱 구)는 3차원 강체로 초당 600번 계산됩니다. 공기 항력·부력·마그누스 힘,
+      구슬끼리·벽·유리와의 충돌(반발·마찰·회전)이 모두 반영되고, 바람의 요동에는 기기의 하드웨어 난수(<code>crypto</code>)가 섞입니다. 단축키: <kbd>Space</kbd> 뽑기 · <kbd>Enter</kbd> 송풍 · <kbd>M</kbd> 음소거 · <kbd>D</kbd> 디버그
+    </p>
+  </section>
+</main>
+<noscript>이 추첨기는 JavaScript와 WebGL이 필요합니다.</noscript>
+<script src="dist/lotto.js"></script>
+</body>
+</html>

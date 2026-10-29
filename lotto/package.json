@@ -1,0 +1,15 @@
+{
+  "name": "steampunk-lotto",
+  "version": "1.0.0",
+  "private": true,
+  "description": "실사풍 3D 스팀펑크 로또 6/45 추첨기 (Three.js + 자체 물리 엔진)",
+  "scripts": {
+    "build": "esbuild src/main.js --bundle --minify --format=iife --target=es2019 --outfile=dist/lotto.js",
+    "dev": "esbuild src/main.js --bundle --format=iife --target=es2019 --sourcemap --outfile=dist/lotto.js --watch",
+    "test": "node tests/test-draw.js 200"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.2",
+    "three": "^0.170.0"
+  }
+}
