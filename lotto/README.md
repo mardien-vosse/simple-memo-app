@@ -4,6 +4,8 @@
 
 ## 실행
 
+- 다른 AI 도구에서 다시 만들거나 옮기려면 [PROMPT.md](PROMPT.md)(지시문)와 `standalone.html`(압축하지 않은 원본 코드가 든 HTML 한 파일)을 보세요.
+
 - `lotto/index.html`을 브라우저(Chrome, Edge, Safari, Firefox 최신판)로 열면 됩니다. 서버나 인터넷 연결이 필요 없습니다.
 - 그래픽 카드가 있는 PC나 맥에서 가장 보기 좋습니다. 느린 기기에서는 화질을 자동으로 낮춥니다.
 
