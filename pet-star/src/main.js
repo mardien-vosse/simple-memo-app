@@ -1,5 +1,6 @@
 // 시작점: 화면, 별, 아이, 행동 두뇌, 카메라를 한데 모아 매 순간 그려요.
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { PET, BEHAVIORS, WORLD } from './config.js';
 import { createWorld } from './world.js';
 import { createPet } from './pet.js';
@@ -37,6 +38,12 @@ try {
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
 const scene = new THREE.Scene();
+// 사진으로 만든 3D 모델에만 은은하게 퍼지는 빛이에요. 털색이 사진처럼 밝고 자연스럽게 보여요.
+// (별·나무·임시 강아지는 다른 재질이라 영향을 받지 않아요.)
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.9;
+pmrem.dispose();
 const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
 // 처음에는 멀리서 시작해서 아이 곁으로 천천히 날아가요.
 camera.position.set(0, 26, 20);
