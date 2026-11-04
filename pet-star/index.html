@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>강아지별</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@700&family=Gowun+Dodum&display=swap">
+<style>
+  /* 화면 전체가 3D 별이고, 그 위에 이름표·버튼·안내가 살짝 떠 있어요. */
+  :root {
+    --sky: #fde6d3;
+    --ink: #43354a;
+    --ink-soft: #76657a;
+    --glass: rgba(255, 250, 246, 0.84);
+    --glass-edge: rgba(255, 255, 255, 0.95);
+    --star: #f2b84b;
+    --shadow: rgba(67, 53, 74, 0.16);
+    --font-name: "Gowun Batang", "AppleMyungjo", "Nanum Myeongjo", serif;
+    --font-ui: "Gowun Dodum", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+    color-scheme: light;
+  }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: var(--sky);
+    color: var(--ink);
+    font-family: var(--font-ui);
+    -webkit-tap-highlight-color: transparent;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  #scene {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    touch-action: none;
+    cursor: grab;
+  }
+  #scene:active { cursor: grabbing; }
+
+  .glass {
+    background: var(--glass);
+    border: 1px solid var(--glass-edge);
+    box-shadow: 0 6px 24px var(--shadow);
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+  }
+
+  .nameplate {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 14px);
+    left: max(16px, env(safe-area-inset-left, 0px));
+    max-width: calc(100% - 32px);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 16px 9px 12px;
+    border-radius: 999px;
+    pointer-events: none;
+  }
+  .nameplate svg { flex: none; width: 22px; height: 22px; color: var(--star); }
+  .nameplate .text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+  #pet-name { font-family: var(--font-name); font-weight: 700; font-size: 17px; letter-spacing: 0.01em; }
+  #pet-status { font-size: 13px; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .dock {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    pointer-events: none;
+  }
+  #toast {
+    max-width: 340px;
+    padding: 11px 16px;
+    border-radius: 16px;
+    font-size: 14px;
+    line-height: 1.5;
+    text-align: center;
+    text-wrap: balance;
+    pointer-events: auto;
+    animation: rise 0.4s ease-out;
+  }
+  #view-toggle {
+    pointer-events: auto;
+    font: inherit;
+    font-size: 15px;
+    color: var(--ink);
+    padding: 12px 22px;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  #view-toggle:focus-visible { outline: 3px solid var(--star); outline-offset: 3px; }
+  .hint { font-size: 12px; color: var(--ink-soft); text-shadow: 0 1px 0 rgba(255, 255, 255, 0.7); }
+
+  #file-warning {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 24px max(16px, env(safe-area-inset-right, 0px)) 24px max(16px, env(safe-area-inset-left, 0px));
+  }
+  #file-warning .card { max-width: 420px; padding: 20px 22px; border-radius: 20px; line-height: 1.6; }
+  #file-warning h1 { font-family: var(--font-name); font-size: 19px; margin: 0 0 8px; }
+  #file-warning code { font-size: 13px; background: rgba(67, 53, 74, 0.08); padding: 2px 6px; border-radius: 6px; }
+
+  @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  @keyframes twinkle { 50% { transform: scale(0.82) rotate(12deg); opacity: 0.75; } }
+  .nameplate svg { animation: twinkle 3.2s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce) {
+    .nameplate svg, #toast { animation: none; }
+  }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<canvas id="scene" aria-label="작은 별 위를 강아지가 걸어 다니는 3D 화면"></canvas>
+
+<div class="nameplate glass" role="status" aria-live="polite">
+  <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2.5l2.6 6.1 6.6.5-5 4.4 1.5 6.5L12 16.6 6.3 20l1.5-6.5-5-4.4 6.6-.5z"/></svg>
+  <div class="text">
+    <span id="pet-name">별이</span>
+    <span id="pet-status">별에 내려오는 중</span>
+  </div>
+</div>
+
+<div class="dock">
+  <div id="toast" class="glass" hidden></div>
+  <button id="view-toggle" class="glass" type="button" aria-pressed="false">별 전체 보기</button>
+  <span class="hint">끌어서 둘러보기 · 두 손가락으로 확대</span>
+</div>
+
+<div id="file-warning" hidden>
+  <div class="card glass">
+    <h1>이 화면은 작은 서버로 열어야 해요</h1>
+    <p>파일을 더블클릭해서 열면 브라우저가 3D 파일을 막아요. 이 폴더에서 <code>python3 -m http.server 8000</code> 을 실행한 뒤, 브라우저에서 <code>http://localhost:8000</code> 을 열어 주세요. 자세한 방법은 README.md에 있어요.</p>
+  </div>
+</div>
+<script>
+  if (location.protocol === 'file:') document.getElementById('file-warning').hidden = false;
+</script>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
