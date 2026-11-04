@@ -12,10 +12,9 @@ export async function createPet(config) {
   let rig = null;
   let notice = '';
   try {
-    const res = await fetch(config.modelUrl, { cache: 'no-cache' });
-    const type = res.headers.get('content-type') || '';
-    if (res.ok && !type.includes('text/html')) {
-      rig = await loadModelRig(await res.arrayBuffer(), config);
+    const bytes = await fetchModel(config.modelUrl);
+    if (bytes) {
+      rig = await loadModelRig(bytes, config);
       notice =
         rig.hasClips || rig.hasLegs
           ? `${config.name}의 3D 모습을 불러왔어요.`
@@ -36,6 +35,29 @@ export async function createPet(config) {
     isPlaceholder: rig.isPlaceholder === true,
     update: (dt, motion) => rig.update(dt, motion),
   };
+}
+
+// 3D 파일을 가져와요. 파일이 없으면 null을 돌려줘요.
+// .glb 형식을 올릴 수 없는 곳(예: Claude 미리보기 페이지)에서는 GLB를 base64 글자로 담은
+// .js 파일(export default '…')을 modelUrl로 써도 돼요.
+async function fetchModel(url) {
+  if (/\.js$/i.test(url)) {
+    let mod;
+    try {
+      mod = await import(new URL(url, document.baseURI).href);
+    } catch {
+      return null;
+    }
+    const text = atob(mod.default);
+    const bytes = new Uint8Array(text.length);
+    for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i);
+    return bytes.buffer;
+  }
+  const res = await fetch(url, { cache: 'no-cache' });
+  const type = res.headers.get('content-type') || '';
+  // 일부 서버는 없는 파일 대신 index.html을 돌려줘서 그것도 '없음'으로 봐요.
+  if (!res.ok || type.includes('text/html')) return null;
+  return res.arrayBuffer();
 }
 
 // 발밑의 동그란 그림자 (진짜 그림자 계산보다 훨씬 가벼워요)
