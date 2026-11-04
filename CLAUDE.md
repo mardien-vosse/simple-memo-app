@@ -8,3 +8,4 @@
 - 행동 확률표와 아이 설정은 `pet-star/src/config.js`에 모아 둬요.
 - 이 저장소는 공개예요. 사진으로 만든 아이 3D 파일(`pet-star/models/*.glb`)은 `.gitignore`로 막아 두고, 비공개 미리보기(Artifact)에만 넣어요.
 - 3D 모델은 Tripo 네발 리깅 뼈대(`…_Limb_0~4`, `Spine_*`, `Head_*`)를 `pet.js`가 찾아서 걷기·앉기를 코드로 움직여요.
+- 이웃 아이들(`neighbors.js`)은 아직 연습용 시뮬레이션이에요. 2단계에서 실시간 서버(Durable Objects)의 실제 아이들로 바꿔야 해요. 수백 마리를 위해 InstancedMesh와 지평선 밖 생략을 써요.

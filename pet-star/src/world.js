@@ -89,10 +89,42 @@ function part(geometry, color) {
   return g;
 }
 
+// 별 표면을 여러 조각으로 나눠요. 카메라에서 보이는 쪽 조각의 풀·꽃·나무만 그려서 큰 별에서도 가벼워요.
+function makeChunker(count) {
+  const centers = [];
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < count; i++) {
+    const y = 1 - (2 * (i + 0.5)) / count;
+    const r = Math.sqrt(1 - y * y);
+    centers.push(new THREE.Vector3(Math.cos(golden * i) * r, y, Math.sin(golden * i) * r));
+  }
+  const spread = new Array(count).fill(0);
+  return {
+    count,
+    centers,
+    spread,
+    // 이 방향이 속한 조각 번호 (그리고 조각의 크기를 기록해요)
+    assign(dir) {
+      let best = 0;
+      let bestDot = -2;
+      for (let i = 0; i < count; i++) {
+        const d = centers[i].dot(dir);
+        if (d > bestDot) {
+          bestDot = d;
+          best = i;
+        }
+      }
+      spread[best] = Math.max(spread[best], centers[best].angleTo(dir));
+      return best;
+    },
+  };
+}
+
 const lowPoly = (opts = {}) => new THREE.MeshLambertMaterial({ flatShading: true, ...opts });
 
 function makePlanet(radius, rand) {
-  const geo = new THREE.IcosahedronGeometry(radius, 10);
+  // 별이 커져도 면 크기가 비슷하도록 잘게 나눠요.
+  const geo = new THREE.IcosahedronGeometry(radius, Math.round(10 * Math.max(1, radius / 8)));
   geo.deleteAttribute('uv');
   geo.computeVertexNormals();
   const pos = geo.attributes.position;
@@ -117,7 +149,7 @@ function makePlanet(radius, rand) {
   return new THREE.Mesh(geo, lowPoly({ vertexColors: true }));
 }
 
-function makeGrass(radius, rand, count) {
+function makeGrass(radius, rand, count, chunker) {
   const blades = [];
   for (let i = 0; i < 3; i++) {
     const b = new THREE.ConeGeometry(0.035, 0.24 + i * 0.05, 3);
@@ -126,38 +158,60 @@ function makeGrass(radius, rand, count) {
     b.rotateY(i * 2.1);
     blades.push(b);
   }
-  const mesh = new THREE.InstancedMesh(mergeGeometries(blades), lowPoly(), count);
-  const color = new THREE.Color();
+  const geo = mergeGeometries(blades);
+  const material = lowPoly();
+  const byChunk = Array.from({ length: chunker.count }, () => []);
   for (let i = 0; i < count; i++) {
-    const m = surfaceMatrix(randomDirection(rand), radius - 0.02, rand() * Math.PI * 2, 0.7 + rand() * 0.7);
-    mesh.setMatrixAt(i, m);
-    mesh.setColorAt(i, color.setHex(pick(COLORS.grass, rand)));
+    const dir = randomDirection(rand);
+    const m = surfaceMatrix(dir, radius - 0.02, rand() * Math.PI * 2, 0.7 + rand() * 0.7);
+    byChunk[chunker.assign(dir)].push({ m, color: pick(COLORS.grass, rand) });
   }
-  return mesh;
+  const group = new THREE.Group();
+  const color = new THREE.Color();
+  byChunk.forEach((list, chunk) => {
+    if (!list.length) return;
+    const mesh = new THREE.InstancedMesh(geo, material, list.length);
+    list.forEach((item, i) => {
+      mesh.setMatrixAt(i, item.m);
+      mesh.setColorAt(i, color.setHex(item.color));
+    });
+    mesh.userData = { chunk, margin: 0.2 };
+    group.add(mesh);
+  });
+  return group;
 }
 
-function makeFlowers(radius, rand, patches, perPatch) {
-  const count = patches * perPatch;
+function makeFlowers(radius, rand, patches, perPatch, chunker) {
   const stemGeo = new THREE.CylinderGeometry(0.012, 0.014, 0.2, 4);
   stemGeo.translate(0, 0.1, 0);
   const headGeo = new THREE.IcosahedronGeometry(0.055, 0);
   headGeo.translate(0, 0.22, 0);
-  const stems = new THREE.InstancedMesh(stemGeo, lowPoly({ color: COLORS.stem }), count);
-  const heads = new THREE.InstancedMesh(headGeo, lowPoly(), count);
-  const color = new THREE.Color();
-  let i = 0;
+  const stemMaterial = lowPoly({ color: COLORS.stem });
+  const headMaterial = lowPoly();
+  const byChunk = Array.from({ length: chunker.count }, () => []);
   for (let p = 0; p < patches; p++) {
-    const center = randomOpenDirection(rand, 0.2);
+    const center = randomOpenDirection(rand, 1.6 / radius);
+    const list = byChunk[chunker.assign(center)];
     const patchColor = pick(COLORS.flowers, rand);
-    for (let k = 0; k < perPatch; k++, i++) {
-      const m = surfaceMatrix(nearbyDirection(center, 0.12, rand), radius - 0.02, rand() * 6.28, 0.8 + rand() * 0.5);
-      stems.setMatrixAt(i, m);
-      heads.setMatrixAt(i, m);
-      heads.setColorAt(i, color.setHex(rand() < 0.8 ? patchColor : pick(COLORS.flowers, rand)));
+    for (let k = 0; k < perPatch; k++) {
+      const m = surfaceMatrix(nearbyDirection(center, 0.96 / radius, rand), radius - 0.02, rand() * 6.28, 0.8 + rand() * 0.5);
+      list.push({ m, color: rand() < 0.8 ? patchColor : pick(COLORS.flowers, rand) });
     }
   }
   const group = new THREE.Group();
-  group.add(stems, heads);
+  const color = new THREE.Color();
+  byChunk.forEach((list, chunk) => {
+    if (!list.length) return;
+    const stems = new THREE.InstancedMesh(stemGeo, stemMaterial, list.length);
+    const heads = new THREE.InstancedMesh(headGeo, headMaterial, list.length);
+    list.forEach((item, i) => {
+      stems.setMatrixAt(i, item.m);
+      heads.setMatrixAt(i, item.m);
+      heads.setColorAt(i, color.setHex(item.color));
+    });
+    stems.userData = heads.userData = { chunk, margin: 0.25 };
+    group.add(stems, heads);
+  });
   return group;
 }
 
@@ -198,28 +252,36 @@ function rock(rand) {
   return { geometry: part(g, pick(COLORS.rock, rand)), radius: 0.22 * sx + 0.1 };
 }
 
-// 나무와 바위는 전부 하나로 합쳐서 한 번에 그려요. 아이가 피해 다닐 수 있게 위치도 기억해 둬요.
-function makeProps(radius, rand, obstacles) {
-  const pieces = [];
+// 나무와 바위는 조각마다 하나로 합쳐서 그려요. 아이가 피해 다닐 수 있게 위치도 기억해 둬요.
+function makeProps(radius, rand, obstacles, density, chunker) {
+  const pieces = Array.from({ length: chunker.count }, () => []);
   const place = (maker, count, sink) => {
     for (let i = 0; i < count; i++) {
       const { geometry, radius: r } = maker(rand);
       let dir;
       for (let tries = 0; tries < 30; tries++) {
-        dir = randomOpenDirection(rand);
+        dir = randomOpenDirection(rand, 2.8 / radius);
         const free = obstacles.every((o) => dir.angleTo(o.dir) * radius > o.radius + r + 0.6);
         if (free) break;
       }
       const s = 0.85 + rand() * 0.4;
       geometry.applyMatrix4(surfaceMatrix(dir, radius - sink, rand() * Math.PI * 2, s));
-      pieces.push(geometry);
+      pieces[chunker.assign(dir)].push(geometry);
       obstacles.push({ dir, radius: r * s });
     }
   };
-  place(roundTree, 6, 0.03);
-  place(pineTree, 4, 0.03);
-  place(rock, 6, 0.06);
-  return new THREE.Mesh(mergeGeometries(pieces), lowPoly({ vertexColors: true }));
+  place(roundTree, Math.round(6 * density), 0.03);
+  place(pineTree, Math.round(4 * density), 0.03);
+  place(rock, Math.round(6 * density), 0.06);
+  const group = new THREE.Group();
+  const material = lowPoly({ vertexColors: true });
+  pieces.forEach((list, chunk) => {
+    if (!list.length) return;
+    const mesh = new THREE.Mesh(mergeGeometries(list), material);
+    mesh.userData = { chunk, margin: 0.45 }; // 키 큰 나무는 지평선 너머에서도 꼭대기가 보여요
+    group.add(mesh);
+  });
+  return group;
 }
 
 function makeCloudLayer(radius, rand, count) {
@@ -369,9 +431,13 @@ export function createWorld(scene, { radius, seed, petName }) {
   const rand = seededRandom(seed);
   const obstacles = [];
 
-  // 별이의 집: 처음 서 있는 곳(별 꼭대기)에서 조금 떨어진 곳, 문은 꼭대기 쪽을 봐요.
+  // 별 넓이가 반지름 8일 때의 몇 배인지 (나무·풀·꽃·구름을 같은 밀도로 깔아요)
+  const density = (radius / 8) ** 2;
+
+  // 별이의 집: 처음 서 있는 곳(별 꼭대기)에서 3.4만큼 떨어진 곳, 문은 꼭대기 쪽을 봐요.
   const house = makeHouse(petName);
-  const houseDir = new THREE.Vector3(0, Math.cos(0.42), Math.sin(0.42));
+  const houseAngle = 3.4 / radius;
+  const houseDir = new THREE.Vector3(0, Math.cos(houseAngle), Math.sin(houseAngle));
   const houseFront = UP.clone().addScaledVector(houseDir, -UP.dot(houseDir)).normalize();
   standOn(house.group, houseDir, houseFront, radius - 0.03);
   const spotAngle = house.spotOffset / radius;
@@ -383,10 +449,12 @@ export function createWorld(scene, { radius, seed, petName }) {
 
   const sky = makeSky();
   const planet = makePlanet(radius, rand);
-  const props = makeProps(radius, rand, obstacles);
-  const grass = makeGrass(radius, rand, 520);
-  const flowers = makeFlowers(radius, rand, 16, 9);
-  const clouds = makeCloudLayer(radius, rand, 9);
+  const chunker = makeChunker(Math.min(40, Math.max(6, Math.round(4 * density))));
+  const props = makeProps(radius, rand, obstacles, density, chunker);
+  const grass = makeGrass(radius, rand, Math.min(6000, Math.round(520 * density)), chunker);
+  const flowers = makeFlowers(radius, rand, Math.min(160, Math.round(16 * density)), 9, chunker);
+  const culled = [...props.children, ...grass.children, ...flowers.children];
+  const clouds = makeCloudLayer(radius, rand, Math.min(60, Math.round(9 * density * 0.6)));
   clouds.rotation.set(0.4, 0, 0.25);
 
   // 빛은 카메라를 따라다녀서, 별 어디를 보든 아이가 밝게 보여요.
@@ -402,7 +470,17 @@ export function createWorld(scene, { radius, seed, petName }) {
   const cloudAxis = new THREE.Vector3(0.3, 1, 0.2).normalize();
   const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
+  const camDir = new THREE.Vector3();
   function update(dt, camera) {
+    // 지평선 너머(별 뒤편)에 있는 조각은 그리지 않아요.
+    const camDistance = camera.position.length();
+    camDir.copy(camera.position).divideScalar(camDistance);
+    const horizon = Math.acos(Math.min(1, radius / camDistance));
+    for (const object of culled) {
+      const { chunk, margin } = object.userData;
+      object.visible = chunker.centers[chunk].angleTo(camDir) < horizon + chunker.spread[chunk] + margin;
+    }
+
     camera.matrixWorld.extractBasis(right, up, back);
     lightDir.copy(up).addScaledVector(right, -0.55).addScaledVector(back, 0.65).normalize();
     sun.position.copy(lightDir).multiplyScalar(40);
@@ -416,5 +494,5 @@ export function createWorld(scene, { radius, seed, petName }) {
     if (!reduceMotion) clouds.rotateOnAxis(cloudAxis, dt * 0.012);
   }
 
-  return { update, obstacles, radius, home };
+  return { update, obstacles, radius, home, houseRadius: house.radius };
 }

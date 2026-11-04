@@ -6,6 +6,7 @@ import { createWorld } from './world.js';
 import { createPet } from './pet.js';
 import { createBrain } from './brain.js';
 import { createCameraRig } from './camera.js';
+import { createNeighbors } from './neighbors.js';
 
 const canvas = document.getElementById('scene');
 const nameEl = document.getElementById('pet-name');
@@ -46,7 +47,7 @@ scene.environmentIntensity = 0.9;
 pmrem.dispose();
 const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
 // 처음에는 멀리서 시작해서 아이 곁으로 천천히 날아가요.
-camera.position.set(0, 26, 20);
+camera.position.set(0, WORLD.planetRadius * 1.6, WORLD.planetRadius * 1.2);
 
 const world = createWorld(scene, { radius: WORLD.planetRadius, seed: WORLD.seed, petName: PET.name });
 const brain = createBrain({
@@ -55,6 +56,17 @@ const brain = createBrain({
   radius: WORLD.planetRadius,
   obstacles: world.obstacles,
   home: world.home,
+});
+// 이웃 아이들: 나무·바위·집과 별이를 피해 다녀요.
+const neighbors = createNeighbors(scene, {
+  count: WORLD.neighbors,
+  radius: WORLD.planetRadius,
+  behaviors: BEHAVIORS,
+  obstacles: [...world.obstacles, { dir: brain.normal, radius: 0.9 }],
+  keepClear: [
+    { dir: new THREE.Vector3(0, 1, 0), radius: 4 },
+    { dir: world.home.dir, radius: world.houseRadius + 2.5 },
+  ],
 });
 const cameraRig = createCameraRig(camera, canvas, {
   planetRadius: WORLD.planetRadius,
@@ -74,8 +86,13 @@ createPet(PET).then((loaded) => {
 
 const VIEW_LABELS = { pet: '별 전체 보기', planet: `${PET.name} 곁으로` };
 viewButton.textContent = VIEW_LABELS.pet;
+let toldNeighbors = false;
 viewButton.addEventListener('click', () => {
   cameraRig.setMode(cameraRig.mode === 'pet' ? 'planet' : 'pet');
+  if (cameraRig.mode === 'planet' && neighbors.count > 0 && !toldNeighbors) {
+    toldNeighbors = true;
+    showToast(`이 별에는 ${PET.name}와 이웃 아이들 ${neighbors.count}마리가 함께 살아요. 이웃 아이들은 아직 연습용이에요.`);
+  }
   viewButton.textContent = VIEW_LABELS[cameraRig.mode];
   viewButton.setAttribute('aria-pressed', String(cameraRig.mode === 'planet'));
 });
@@ -106,9 +123,10 @@ renderer.setAnimationLoop(() => {
     }
   }
   cameraRig.update(dt, brain.normal, world.home);
+  neighbors.update(dt, camera);
   world.update(dt, camera);
   renderer.render(scene, camera);
 });
 
 // 개발자 도구에서 살펴볼 수 있게 열어 둬요. (예: petStar.brain.motion)
-window.petStar = { renderer, scene, camera, brain, cameraRig, get pet() { return pet; } };
+window.petStar = { renderer, scene, camera, brain, cameraRig, neighbors, get pet() { return pet; } };

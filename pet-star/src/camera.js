@@ -9,7 +9,8 @@ export function createCameraRig(camera, dom, { planetRadius, startForward }) {
   const R = planetRadius;
   const views = {
     pet: { yaw: 2.5, pitch: 0.38, dist: 5.2, minDist: 2.6, maxDist: 8, minPitch: 0.12, maxPitch: 1.2 },
-    planet: { yaw: 0, pitch: 0.4, dist: 27, minDist: 16, maxDist: 42, minPitch: -1.25, maxPitch: 1.25 },
+    // 별 전체 보기 거리는 별 크기에 맞춰요.
+    planet: { yaw: 0, pitch: 0.4, dist: R * 3.4, minDist: R * 2, maxDist: R * 5.2, minPitch: -1.25, maxPitch: 1.25 },
   };
   let mode = 'pet';
   let lastInput = -Infinity;

@@ -79,6 +79,9 @@ export function createBrain({ behaviors, walkSpeed, radius, obstacles, home = nu
     left.crossVectors(normal, forward);
     for (const o of obstacles) {
       if (ignoreHome && o.isHome) continue;
+      // 멀리 있는 것은 각도 계산 없이 바로 건너뛰어요 (수백 마리가 함께 살아도 가볍게).
+      o.cosReach ??= Math.cos((o.radius + 1.3) / radius);
+      if (normal.dot(o.dir) < o.cosReach) continue;
       const distance = normal.angleTo(o.dir) * radius;
       const reach = o.radius + 1.3;
       if (distance > reach) continue;
