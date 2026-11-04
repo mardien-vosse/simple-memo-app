@@ -105,7 +105,8 @@ export function createCameraRig(camera, dom, { planetRadius, startForward }) {
     mode = next;
   }
 
-  function update(dt, petNormal) {
+  // home: 집 방향. 아이가 집 가까이 있으면 카메라가 집 반대편(아이 앞쪽)으로 천천히 돌아가서 벽에 가리지 않아요.
+  function update(dt, petNormal, home = null) {
     const n = petNormal;
     petPos.copy(n).multiplyScalar(R);
 
@@ -116,6 +117,15 @@ export function createCameraRig(camera, dom, { planetRadius, startForward }) {
     if (mode === 'pet') {
       const v = views.pet;
       h.copy(ref).applyAxisAngle(n, v.yaw);
+      const nearHome = home && n.angleTo(home.dir) * R < 4;
+      if (nearHome && performance.now() - lastInput > 3000) {
+        // h가 집 쪽을 향하면 카메라는 집 반대편에 서요. 살짝 비스듬히(0.5) 서서 집도 함께 보여요.
+        a.copy(home.dir).addScaledVector(n, -home.dir.dot(n)).normalize().applyAxisAngle(n, 0.5);
+        axis.crossVectors(h, a);
+        const off = Math.atan2(axis.dot(n), h.dot(a));
+        v.yaw += clamp(off, -1, 1) * dt * 0.9;
+        h.copy(ref).applyAxisAngle(n, v.yaw);
+      }
       desiredLook.copy(petPos).addScaledVector(n, 0.75);
       desiredPos
         .copy(desiredLook)

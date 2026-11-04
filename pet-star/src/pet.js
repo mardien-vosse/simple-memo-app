@@ -1,9 +1,10 @@
-// 아이의 3D 모습을 준비하고 움직임(걷기·앉기)을 그려요.
+// 아이의 3D 모습을 준비하고 움직임(걷기·앉기·엎드리기·낮잠·킁킁·두리번)과 표정(시선·눈 깜빡임)을 그려요.
 // models/dog.glb 가 있으면 그 파일을 쓰고, 없으면 도형으로 만든 임시 강아지를 써요.
 import * as THREE from 'three';
 
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
 const smooth = (v) => v * v * (3 - 2 * v);
+const damp = (current, target, rate, dt) => current + (target - current) * (1 - Math.exp(-rate * dt));
 
 export async function createPet(config) {
   const root = new THREE.Group();
@@ -27,13 +28,29 @@ export async function createPet(config) {
     notice = `${config.modelUrl} 파일을 열지 못해서 임시 강아지가 나왔어요. 자세한 이유는 브라우저 개발자 도구의 콘솔에 있어요.`;
   }
   if (!rig) rig = makeToyDogRig(config);
-
   root.add(rig.object);
+
+  const gaze = createGaze();
+  const blink = createBlink();
+  const cameraLocal = new THREE.Vector3();
   return {
     root,
     notice,
     isPlaceholder: rig.isPlaceholder === true,
-    update: (dt, motion) => rig.update(dt, motion),
+    // cameraPosition: 집사(카메라)의 위치. 아이가 가끔 그쪽을 바라봐요.
+    update(dt, motion, cameraPosition) {
+      let camera = null;
+      if (cameraPosition) {
+        root.worldToLocal(cameraLocal.copy(cameraPosition)).sub(rig.headPosition);
+        const yaw = Math.atan2(cameraLocal.x, cameraLocal.z);
+        if (Math.abs(yaw) < 1.4) {
+          const pitch = -Math.atan2(cameraLocal.y, Math.hypot(cameraLocal.x, cameraLocal.z));
+          camera = { yaw: THREE.MathUtils.clamp(yaw, -1, 1), pitch: THREE.MathUtils.clamp(pitch, -0.45, 0.35) };
+        }
+      }
+      const look = gaze.update(dt, motion, camera);
+      rig.update(dt, motion, { yaw: look.yaw, pitch: look.pitch, closed: blink.update(dt, motion) });
+    },
   };
 }
 
@@ -84,6 +101,92 @@ function makeBlobShadow(length) {
   return shadow;
 }
 
+/* ---------- 표정: 시선과 눈 깜빡임 ---------- */
+
+// 시선: 걸을 때는 주로 앞을 보다가 가끔 곁눈질하고, 멈춰 있을 때는 주변을 둘러보거나 집사(카메라)를 바라봐요.
+function createGaze(random = Math.random) {
+  let yaw = 0;
+  let pitch = 0;
+  let targetYaw = 0;
+  let targetPitch = 0;
+  let timer = 0.5;
+  let watching = false; // 집사를 바라보는 중
+  return {
+    update(dt, motion, camera) {
+      timer -= dt;
+      if (timer <= 0) {
+        watching = false;
+        const roll = random();
+        if (motion.look > 0.5) {
+          targetYaw = (random() * 2 - 1) * 0.9;
+          targetPitch = (random() - 0.6) * 0.3;
+          timer = 0.7 + random() * 0.9;
+        } else if (motion.speed > 0.1) {
+          targetYaw = roll < 0.25 ? (random() * 2 - 1) * 0.45 : (random() * 2 - 1) * 0.1;
+          targetPitch = 0;
+          timer = 1.2 + random() * 2.2;
+        } else if (camera && roll < 0.4) {
+          watching = true;
+          timer = 1.5 + random() * 2.5;
+        } else {
+          targetYaw = (random() * 2 - 1) * 0.6;
+          targetPitch = (random() - 0.5) * 0.25;
+          timer = 1.2 + random() * 2.5;
+        }
+      }
+      if (watching && camera) {
+        targetYaw = camera.yaw;
+        targetPitch = camera.pitch;
+      }
+      const awake = 1 - motion.sleep;
+      yaw = damp(yaw, targetYaw * awake, 4, dt);
+      pitch = damp(pitch, targetPitch * awake, 4, dt);
+      return { yaw, pitch };
+    },
+  };
+}
+
+// 눈 깜빡임: 2~6초마다 깜빡, 가끔 두 번 연달아. 엎드리면 살짝 졸린 눈, 낮잠 자면 꼭 감아요.
+function createBlink(random = Math.random) {
+  let timer = 1.5;
+  let time = -1; // 0 이상이면 깜빡이는 중
+  let gap = 0;
+  let again = false;
+  const BLINK = 0.16; // 한 번 깜빡이는 데 걸리는 시간(초)
+  return {
+    update(dt, motion) {
+      if (time < 0) {
+        if (gap > 0) {
+          gap -= dt;
+          if (gap <= 0) time = 0;
+        } else {
+          timer -= dt;
+          if (timer <= 0) {
+            time = 0;
+            again = random() < 0.2;
+            timer = 2.2 + random() * 4;
+          }
+        }
+      }
+      let blink = 0;
+      if (time >= 0) {
+        time += dt;
+        const k = time / BLINK;
+        if (k >= 1) {
+          time = -1;
+          if (again) {
+            again = false;
+            gap = 0.1;
+          }
+        } else {
+          blink = Math.sin(Math.PI * k);
+        }
+      }
+      return Math.max(blink, smooth(motion.sleep), 0.3 * motion.lie);
+    },
+  };
+}
+
 /* ---------- 우리 아이 3D 파일 (GLB) ---------- */
 
 async function loadModelRig(buffer, config) {
@@ -116,6 +219,13 @@ async function loadModelRig(buffer, config) {
   // 파일에 걷기 동작이 없으면, 네발 뼈대(Tripo 리깅)를 찾아 코드로 직접 움직여요.
   const clips = gltf.animations || [];
   const legs = clips.length ? null : findQuadrupedSkeleton(model);
+  // 털 사진에서 눈 2개와 코를 찾아 얼굴 방향을 알아내고, 눈 위에 눈꺼풀을 붙여요.
+  const face = legs ? findFace(model, legs) : null;
+  const eyelids = face ? makeEyelids(face) : [];
+  if (face) {
+    const degrees = THREE.MathUtils.radToDeg(face.turn).toFixed(0);
+    console.info(`[강아지별] 눈과 코를 찾았어요. 모델의 고개가 ${degrees}도 돌아가 있어서 바로잡아요.`);
+  }
 
   // 방향 맞추기 → 크기 맞추기 → 발이 땅에 닿게 옮기기
   // 뼈대가 있으면 머리 쪽을 보고 앞쪽을 자동으로 찾아요.
@@ -143,32 +253,44 @@ async function loadModelRig(buffer, config) {
   const object = new THREE.Group();
   object.add(pose);
   object.updateMatrixWorld(true);
+  const toObject = (v) => v.clone().applyMatrix4(model.matrixWorld);
 
   const hip = new THREE.Vector3(0, 0, -length * 0.35);
-  let sitTilt = SIT_TILT;
-  let sitDrop = 0;
-  let backThighFold = 0;
-  let backShinFold = 0;
+  const headPosition = new THREE.Vector3(0, size.y * scale * 0.8, length * 0.4);
+  const sit = { tilt: SIT_TILT, drop: 0, backUpper: 0, backLower: 0 };
+  const lie = { drop: 0, frontUpper: 0, backUpper: 0, backLower: 0 };
   if (legs) {
-    // 뼈 위치를 별 위 크기로 바꿔서 앉는 자세를 계산해요.
-    const toObject = (v) => v.clone().applyMatrix4(model.matrixWorld);
+    // 뼈 위치를 별 위 크기로 바꿔서 앉는·엎드리는 자세를 계산해요.
     hip.copy(toObject(legs.backHip));
+    if (face) headPosition.copy(toObject(face.middle));
     const frontPaw = toObject(legs.frontPaw);
+    const shoulder = toObject(legs.frontHip);
     const reach = frontPaw.z - hip.z;
-    // 엉덩이를 축으로 몸을 세운 만큼 내려서 앞발이 땅에 닿게 해요.
-    const dropFor = (a) => hip.y * (1 - Math.cos(a)) + reach * Math.sin(a);
+    const body = analyzeBody(model, hip);
+
+    // 앉기: 엉덩이를 축으로 몸을 세운 만큼 내려서 앞발이 땅에 닿게 해요.
     // 다리가 짧은 아이는 몸을 많이 세우면 엉덩이가 땅에 파묻혀요. 딱 닿는 만큼만 세워요.
-    sitTilt = solveSitTilt(model, hip, dropFor);
-    sitDrop = dropFor(sitTilt);
-    // 내려간 엉덩이 높이에 맞춰 뒷다리를 접어요: 허벅지는 앞으로, 정강이는 뒤로 (뒷발이 엉덩이 밑에 와요).
-    const fold = foldHindLeg(hip.y - sitDrop, legs.backThigh * scale, legs.backShin * scale);
-    backThighFold = -fold.thigh + sitTilt;
-    backShinFold = fold.thigh + fold.shin;
-    legs.stepRate = Math.PI / (2 * legs.frontLegLength * scale * Math.sin(LEG_SWING));
+    const dropFor = (a) => hip.y * (1 - Math.cos(a)) + reach * Math.sin(a);
+    sit.tilt = solveSitTilt(body.rear, hip, dropFor);
+    sit.drop = dropFor(sit.tilt);
+    // 뒷다리: 허벅지는 앞으로, 정강이는 뒤로 접어서 뒷발이 엉덩이 밑에 오게 해요.
+    const sitFold = foldHindLeg(hip.y - sit.drop, legs.backThigh * scale, legs.backShin * scale);
+    sit.backUpper = -sitFold.thigh + sit.tilt;
+    sit.backLower = sitFold.thigh + sitFold.shin;
+
+    // 엎드리기: 배가 땅에 닿을 만큼 몸을 내리고, 앞다리는 앞으로 뻗고, 뒷다리는 접어요.
+    lie.drop = Math.max(0, body.bellyY - 0.015 * length);
+    const frontLeg = legs.frontLegLength * scale;
+    lie.frontUpper = -Math.acos(clamp01((shoulder.y - lie.drop) / Math.max(frontLeg, 1e-6)));
+    const lieFold = foldHindLeg(hip.y - lie.drop, legs.backThigh * scale, legs.backShin * scale);
+    lie.backUpper = -lieFold.thigh;
+    lie.backLower = lieFold.thigh + lieFold.shin;
+
+    legs.stepRate = Math.PI / (2 * frontLeg * Math.sin(LEG_SWING));
+    console.info(`[강아지별] 앉는 각도 ${THREE.MathUtils.radToDeg(sit.tilt).toFixed(0)}도`);
   }
   pose.position.copy(hip);
   inner.position.copy(hip).negate();
-  if (legs) console.info(`[강아지별] 앉는 각도 ${(THREE.MathUtils.radToDeg(sitTilt)).toFixed(0)}도`);
 
   // 파일 안에 들어 있는 동작(애니메이션) 찾기: 이름에 walk, sit, idle 등이 있으면 써요.
   let mixer = null;
@@ -183,7 +305,7 @@ async function loadModelRig(buffer, config) {
     if (restClip && restClip !== walkClip) restAction = mixer.clipAction(restClip).play();
     console.info('[강아지별] 찾은 동작:', clips.map((c) => c.name).join(', '));
   } else if (legs) {
-    console.info('[강아지별] 네발 뼈대를 찾았어요. 걷기·앉기를 코드로 움직여요.');
+    console.info('[강아지별] 네발 뼈대를 찾았어요. 걷기·앉기·엎드리기를 코드로 움직여요.');
   }
 
   let phase = 0;
@@ -191,12 +313,16 @@ async function loadModelRig(buffer, config) {
   let wagPhase = 0;
   return {
     object,
+    headPosition,
     hasClips: clips.length > 0,
     hasLegs: legs !== null,
-    update(dt, motion) {
+    update(dt, motion, expression) {
       time += dt;
       const walk = clamp01(motion.speed / motion.walkSpeed);
       const s = smooth(motion.sit);
+      const l = smooth(motion.lie);
+      const z = smooth(motion.sleep);
+      const sn = smooth(motion.sniff);
 
       if (mixer) {
         walkAction.timeScale = walk;
@@ -206,48 +332,71 @@ async function loadModelRig(buffer, config) {
         }
         mixer.update(dt);
         if (!restAction) pose.rotation.x = -0.32 * s;
+        pose.position.y = hip.y - hip.y * 0.3 * l;
         return;
       }
 
-      if (legs) {
-        // 발이 미끄러지지 않을 만큼의 걸음 속도로 다리를 움직여요.
-        phase += dt * motion.speed * legs.stepRate;
-        const stride = walk * (1 - s);
-        for (const leg of legs.all) {
-          const p = phase + (leg.diagonal ? 0 : Math.PI);
-          const swing = LEG_SWING * Math.sin(p) * stride;
-          const lift = 0.55 * Math.max(0, -Math.cos(p)) * stride;
-          const sitUpper = leg.front ? sitTilt : backThighFold;
-          const sitLower = leg.front ? 0 : backShinFold;
-          setJoint(leg.upper, swing + sitUpper * s);
-          if (leg.lower) setJoint(leg.lower, lift + sitLower * s);
-        }
-        // 몸: 걸을 때 통통, 앉을 때 엉덩이를 내리고 몸을 세워요.
-        pose.rotation.x = -sitTilt * s;
-        pose.position.y = hip.y - sitDrop * s;
-        object.position.y = Math.abs(Math.sin(phase)) * 0.012 * length * walk;
-        // 머리: 걸을 때 끄덕끄덕, 앉아 있을 때 천천히 두리번
-        if (legs.neck) setJoint(legs.neck, sitTilt * 0.6 * s + Math.sin(phase * 2) * 0.03 * walk);
-        if (legs.head) {
-          const look = Math.sin(time * 0.7) * 0.4 * s + Math.sin(time * 0.9) * 0.08 * (1 - s);
-          setJoint(legs.head, 0, look);
-        }
-        // 꼬리 살랑살랑
-        wagPhase += dt * (5 + 5 * walk);
-        legs.tails.forEach((joint, i) => setJoint(joint, 0, Math.sin(wagPhase - i * 0.6) * (i ? 0.25 : 0.35)));
+      if (!legs) {
+        // 뼈대도 동작도 없으면 몸 전체를 통통 흔들며 걷고, 몸을 살짝 세워 앉고, 낮춰서 엎드려요.
+        phase += dt * motion.speed * (12 / length);
+        pose.rotation.x = -0.32 * s;
+        pose.position.y = hip.y - hip.y * 0.3 * l;
+        object.position.y = Math.abs(Math.sin(phase)) * 0.035 * length * walk;
+        pose.rotation.z = Math.sin(phase) * 0.04 * walk;
         return;
       }
 
-      // 뼈대도 동작도 없으면 몸 전체를 통통 흔들며 걷고, 몸을 살짝 세워 앉아요.
-      phase += dt * motion.speed * (12 / length);
-      pose.rotation.x = -0.32 * s;
-      object.position.y = Math.abs(Math.sin(phase)) * 0.035 * length * walk;
-      pose.rotation.z = Math.sin(phase) * 0.04 * walk;
+      // 다리: 발이 미끄러지지 않을 만큼의 걸음 속도로 움직이고, 자세에 맞춰 접어요.
+      phase += dt * motion.speed * legs.stepRate;
+      const stride = walk * (1 - Math.max(s, l));
+      for (const leg of legs.all) {
+        const p = phase + (leg.diagonal ? 0 : Math.PI);
+        const swing = LEG_SWING * Math.sin(p) * stride;
+        const lift = 0.55 * Math.max(0, -Math.cos(p)) * stride;
+        const upper = leg.front ? sit.tilt * s + lie.frontUpper * l : sit.backUpper * s + lie.backUpper * l;
+        const lower = leg.front ? 0 : sit.backLower * s + lie.backLower * l;
+        setJoint(leg.upper, swing + upper);
+        if (leg.lower) setJoint(leg.lower, lift + lower);
+      }
+
+      // 몸: 걸을 때 통통, 앉으면 엉덩이를 내리고 세우고, 엎드리면 배를 땅에 대요.
+      pose.rotation.x = -sit.tilt * s;
+      pose.position.y = hip.y - sit.drop * s - lie.drop * l;
+      object.position.y = Math.abs(Math.sin(phase)) * 0.012 * length * walk;
+      // 숨쉬기: 잘 때는 더 크고 천천히
+      if (legs.chest) setJoint(legs.chest, Math.sin(time * (2.2 - 1.1 * z)) * (0.012 + 0.02 * z));
+
+      // 머리: (모델에 굳은 고개 돌림 바로잡기) + 시선 + 자세(킁킁·졸기)
+      const sniffNod = sn * (0.55 + Math.sin(time * 14) * 0.05);
+      const turnHead = (face ? face.turn : 0) + expression.yaw * (1 - 0.6 * sn) + sn * Math.sin(time * 3) * 0.2 + 0.3 * z;
+      const nod = sit.tilt * 0.6 * s + sniffNod + 0.5 * z - 0.08 * l * (1 - z) + Math.sin(phase * 2) * 0.03 * walk;
+      const lookUp = expression.pitch * 0.5 * (1 - sn);
+      if (legs.neck) setJoint(legs.neck, nod * 0.6 + lookUp, turnHead * 0.6);
+      if (legs.head) setJoint(legs.head, nod * 0.4 + lookUp, turnHead * 0.4);
+
+      // 꼬리 살랑살랑 (잘 때는 거의 멈춰요)
+      wagPhase += dt * (5 + 5 * walk) * (1 - 0.6 * z);
+      const wag = (1 - 0.85 * z) * (1 - 0.4 * l);
+      legs.tails.forEach((joint, i) => setJoint(joint, 0, Math.sin(wagPhase - i * 0.6) * (i ? 0.25 : 0.35) * wag));
+
+      // 눈꺼풀: 위에서 아래로 내려와 눈을 덮어요.
+      for (const lid of eyelids) {
+        lid.scale.y = Math.max(0.001, expression.closed);
+        lid.visible = expression.closed > 0.03;
+      }
     },
   };
 }
 
 const LEG_SWING = 0.38; // 걸을 때 다리를 앞뒤로 흔드는 각도
+
+// 뼈 하나를 '쉬는 자세'에서 위축(좌우로 돌림)만큼 돌린 뒤 옆축(앞뒤로 끄덕)만큼 숙여요.
+const _q = new THREE.Quaternion();
+function setJoint(joint, pitch, yaw = 0) {
+  joint.bone.quaternion.copy(joint.rest);
+  if (pitch) joint.bone.quaternion.multiply(_q.setFromAxisAngle(joint.side, pitch));
+  if (yaw) joint.bone.quaternion.multiply(_q.setFromAxisAngle(joint.up, yaw));
+}
 
 // 앉은 엉덩이 높이(height)에서 허벅지(thigh)·정강이(shin)를 접는 각도를 찾아요.
 // 허벅지는 앞으로, 정강이는 뒤로 기울여서 발끝이 엉덩이 바로 밑 땅에 닿게 해요.
@@ -261,14 +410,15 @@ function foldHindLeg(height, thigh, shin) {
   return best;
 }
 
-// 몸을 세웠을 때 엉덩이 쪽 몸통이 땅 밑으로 내려가지 않는 가장 큰 각도를 찾아요.
-function solveSitTilt(model, hip, dropFor) {
-  const points = [];
+// 몸통(다리를 뺀 부분)의 점들을 살펴요: 엉덩이 뒤쪽 점들(앉는 각도용)과 배의 가장 낮은 높이(엎드리기용).
+function analyzeBody(model, hip) {
+  const rear = [];
+  let bellyY = Infinity;
   const v = new THREE.Vector3();
   model.traverse((o) => {
     if (!o.isSkinnedMesh) return;
     const count = o.geometry.attributes.position.count;
-    const step = Math.max(1, Math.floor(count / 6000));
+    const step = Math.max(1, Math.floor(count / 8000));
     const joints = o.geometry.attributes.skinIndex;
     const weights = o.geometry.attributes.skinWeight;
     const legBones = new Set(o.skeleton.bones.map((b, i) => (/limb/i.test(b.name) ? i : -1)).filter((i) => i >= 0));
@@ -279,10 +429,15 @@ function solveSitTilt(model, hip, dropFor) {
       if (legBones.has(joints.getComponent(i, main))) continue;
       o.getVertexPosition(i, v);
       o.localToWorld(v);
-      // 엉덩이 뒤쪽, 다리보다 위에 있는 몸통 부분만 봐요.
-      if (v.z < hip.z && v.y > hip.y * 0.45) points.push(v.clone());
+      bellyY = Math.min(bellyY, v.y);
+      if (v.z < hip.z && v.y > hip.y * 0.45) rear.push(v.clone());
     }
   });
+  return { rear, bellyY: Number.isFinite(bellyY) ? bellyY : 0 };
+}
+
+// 몸을 세웠을 때 엉덩이 쪽 몸통이 땅 밑으로 내려가지 않는 가장 큰 각도를 찾아요.
+function solveSitTilt(points, hip, dropFor) {
   if (points.length === 0) return SIT_TILT;
   let best = 0.12;
   for (let a = 0.12; a <= 0.55; a += 0.02) {
@@ -292,14 +447,6 @@ function solveSitTilt(model, hip, dropFor) {
     best = a;
   }
   return best;
-}
-
-// 뼈 하나를 '쉬는 자세'에서 옆축(앞뒤로 끄덕) · 위축(좌우로 돌림)만큼 돌려요.
-const _q = new THREE.Quaternion();
-function setJoint(joint, pitch, yaw = 0) {
-  joint.bone.quaternion.copy(joint.rest);
-  if (pitch) joint.bone.quaternion.multiply(_q.setFromAxisAngle(joint.side, pitch));
-  if (yaw) joint.bone.quaternion.multiply(_q.setFromAxisAngle(joint.up, yaw));
 }
 
 // Tripo가 붙여 주는 네발 뼈대를 찾아요: 다리 4개(…_Limb_0~4), 등뼈(Spine), 머리(Head), 꼬리.
@@ -342,11 +489,6 @@ function findQuadrupedSkeleton(model) {
       up: up.clone().applyQuaternion(inverse),
     };
   };
-  const legLength = (c) => {
-    let sum = 0;
-    for (let i = 2; i < c.bones.length; i++) if (c.bones[i] && c.bones[i - 1]) sum += pos(c.bones[i]).distanceTo(pos(c.bones[i - 1]));
-    return sum;
-  };
   const segment = (c, from, to) => {
     let sum = 0;
     for (let i = from + 1; i <= to; i++) if (c.bones[i] && c.bones[i - 1]) sum += pos(c.bones[i]).distanceTo(pos(c.bones[i - 1]));
@@ -362,9 +504,9 @@ function findQuadrupedSkeleton(model) {
     };
   };
 
-  // 머리 쪽 뼈: 목(가장 앞 등뼈 다음)과 머리
   const byName = (re) => bones.filter((b) => re.test(b.name)).sort((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true }));
   const headChain = byName(/head_\d+$/i);
+  const spine = byName(/spine_\d+$/i);
   // 꼬리: 엉덩이 쪽 뿌리 뼈에 바로 붙은, 다리·등뼈가 아닌 뼈 줄기
   const root = (back[0].bones[0] || back[0].bones[1]).parent;
   const tails = [];
@@ -377,19 +519,200 @@ function findQuadrupedSkeleton(model) {
     }
   }
 
+  const frontLeg = (c) => segment(c, 1, c.bones.length - 1);
   return {
     forward,
+    up,
     backHip,
+    frontHip: hipOf(front),
     frontPaw: average(front.map((c) => pos(c.bones[c.bones.length - 1]))),
-    frontLegLength: (legLength(front[0]) + legLength(front[1])) / 2,
+    frontLegLength: (frontLeg(front[0]) + frontLeg(front[1])) / 2,
     backThigh: (segment(back[0], 1, 2) + segment(back[1], 1, 2)) / 2,
     backShin: (segment(back[0], 2, back[0].bones.length - 1) + segment(back[1], 2, back[1].bones.length - 1)) / 2,
     all: [...front.map((c) => toLeg(c, true)), ...back.map((c) => toLeg(c, false))],
     neck: headChain[0] ? joint(headChain[0]) : null,
     head: headChain[1] ? joint(headChain[1]) : null,
+    headBone: headChain[1] || headChain[0],
+    chest: spine.length > 2 ? joint(spine[Math.floor(spine.length / 2)]) : null,
     tails,
     stepRate: 10,
   };
+}
+
+// 털 사진(텍스처)에서 머리 부분의 까만 점들을 찾아, 두 눈과 코를 골라내요.
+// 두 눈을 잇는 선과 코 쪽 방향이 직각인 조합을 고르고, 거기서 얼굴이 향한 방향을 알아내요.
+function findFace(model, legs) {
+  let mesh = null;
+  model.traverse((o) => {
+    if (o.isSkinnedMesh && o.material?.map?.image && !mesh) mesh = o;
+  });
+  if (!mesh || !legs.headBone) return null;
+  const image = mesh.material.map.image;
+  const SIZE = 512;
+  let pixels;
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = SIZE;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(image, 0, 0, SIZE, SIZE);
+    pixels = ctx.getImageData(0, 0, SIZE, SIZE).data;
+  } catch {
+    return null;
+  }
+
+  // 머리 뼈(와 그 아래 뼈들)에 붙은 점만 봐요.
+  const bones = mesh.skeleton.bones;
+  const headSet = new Set();
+  bones.forEach((b, i) => {
+    for (let p = b; p; p = p.parent) {
+      if (p === legs.headBone) {
+        headSet.add(i);
+        break;
+      }
+    }
+  });
+  const g = mesh.geometry;
+  const uv = g.attributes.uv;
+  const joints = g.attributes.skinIndex;
+  const weights = g.attributes.skinWeight;
+  if (!uv) return null;
+  const head = [];
+  const v = new THREE.Vector3();
+  for (let i = 0; i < g.attributes.position.count; i++) {
+    let main = 0;
+    for (let k = 1; k < 4; k++) if (weights.getComponent(i, k) > weights.getComponent(i, main)) main = k;
+    const bone = joints.getComponent(i, main);
+    if (!headSet.has(bone)) continue;
+    mesh.getVertexPosition(i, v);
+    mesh.localToWorld(v);
+    const x = Math.min(SIZE - 1, Math.floor(uv.getX(i) * SIZE));
+    const y = Math.min(SIZE - 1, Math.floor(uv.getY(i) * SIZE));
+    const o = (y * SIZE + x) * 4;
+    const rgb = [pixels[o], pixels[o + 1], pixels[o + 2]];
+    head.push({ p: v.clone(), rgb, lum: 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2], bone });
+  }
+  if (head.length < 50) return null;
+  const headCenter = head.reduce((a, h) => a.add(h.p), new THREE.Vector3()).divideScalar(head.length);
+  const box = new THREE.Box3().setFromPoints(head.map((h) => h.p));
+  const headSize = box.getSize(new THREE.Vector3()).length();
+
+  // 까만 점들을 가까운 것끼리 묶어요.
+  const clusterDark = (threshold) => {
+    const dark = head.filter((h) => h.lum < threshold);
+    const link = headSize * 0.032; // 눈과 코가 한 덩어리로 묶이지 않을 만큼 가깝게
+    const used = new Uint8Array(dark.length);
+    const clusters = [];
+    for (let i = 0; i < dark.length; i++) {
+      if (used[i]) continue;
+      used[i] = 1;
+      const group = [dark[i]];
+      for (let q = 0; q < group.length; q++) {
+        for (let j = 0; j < dark.length; j++) {
+          if (!used[j] && group[q].p.distanceTo(dark[j].p) < link) {
+            used[j] = 1;
+            group.push(dark[j]);
+          }
+        }
+      }
+      if (group.length >= 4) {
+        const c = group.reduce((a, h) => a.add(h.p), new THREE.Vector3()).divideScalar(group.length);
+        // 튀는 점에 흔들리지 않게 평균 거리로 크기를 재요 (원판이면 반지름 = 평균제곱거리 × √2).
+        const radius = Math.sqrt((2 * group.reduce((a, h) => a + h.p.distanceToSquared(c), 0)) / group.length);
+        clusters.push({ center: c, radius, count: group.length, members: group });
+      }
+    }
+    return clusters.sort((a, b) => b.count - a.count).slice(0, 6);
+  };
+
+  let clusters = clusterDark(45);
+  if (clusters.length < 3) clusters = clusterDark(65);
+  if (clusters.length < 3) return null;
+
+  // 눈 2개 + 코 1개 조합 중에서 가장 그럴듯한 것을 골라요.
+  const up = legs.up;
+  let best = null;
+  for (let n = 0; n < clusters.length; n++) {
+    for (let a = 0; a < clusters.length; a++) {
+      for (let b = a + 1; b < clusters.length; b++) {
+        if (a === n || b === n) continue;
+        const e1 = clusters[a];
+        const e2 = clusters[b];
+        const nose = clusters[n];
+        const eyeLine = e2.center.clone().sub(e1.center).setY(0);
+        const gap = eyeLine.length();
+        if (gap < headSize * 0.12 || gap > headSize * 0.8) continue;
+        const middle = e1.center.clone().add(e2.center).multiplyScalar(0.5);
+        const toNose = nose.center.clone().sub(middle);
+        if (toNose.y > headSize * 0.02) continue; // 코는 눈보다 아래에 있어요
+        const flat = toNose.clone().setY(0);
+        if (flat.length() < 1e-6) continue;
+        const perpendicular = Math.abs(eyeLine.clone().normalize().dot(flat.normalize()));
+        const level = Math.abs(e1.center.y - e2.center.y) / headSize;
+        const alike = Math.min(e1.count, e2.count) / Math.max(e1.count, e2.count);
+        if (alike < 0.3) continue;
+        const score = perpendicular + level * 2 + (1 - alike) * 0.3;
+        if (!best || score < best.score) best = { score, e1, e2, nose, middle, eyeLine };
+      }
+    }
+  }
+  if (!best || best.score > 0.45) return null;
+
+  // 얼굴 방향: 두 눈을 잇는 선에 직각이고 코 쪽을 향해요.
+  const faceDir = new THREE.Vector3().crossVectors(up, best.eyeLine).normalize();
+  if (faceDir.dot(best.nose.center.clone().sub(best.middle)) < 0) faceDir.negate();
+  const cross = new THREE.Vector3().crossVectors(faceDir, legs.forward);
+  const turn = Math.atan2(cross.dot(up), faceDir.dot(legs.forward));
+
+  // 눈 둘레의 털색을 골라 눈꺼풀 색으로 써요. 눈꺼풀 크기는 두 눈 사이 거리를 넘지 않게 해요.
+  const gap = best.eyeLine.length();
+  const eyes = [best.e1, best.e2].map((eye) => {
+    eye.radius = Math.min(eye.radius, gap * 0.3);
+    const ring = head.filter((h) => {
+      const d = h.p.distanceTo(eye.center);
+      return d > eye.radius * 1.4 && d < eye.radius * 2.8 && h.lum > 70;
+    });
+    const fur = ring.length
+      ? ring.reduce((a, h) => [a[0] + h.rgb[0], a[1] + h.rgb[1], a[2] + h.rgb[2]], [0, 0, 0]).map((c) => c / ring.length)
+      : [200, 160, 110];
+    const counts = {};
+    let bone = legs.headBone;
+    let most = 0;
+    for (const m of eye.members) {
+      counts[m.bone] = (counts[m.bone] || 0) + 1;
+      if (counts[m.bone] > most) {
+        most = counts[m.bone];
+        bone = bones[m.bone];
+      }
+    }
+    const outward = eye.center.clone().sub(headCenter).setY(0).normalize();
+    const normal = faceDir.clone().multiplyScalar(0.75).addScaledVector(outward, 0.5).normalize();
+    return { center: eye.center, radius: eye.radius, normal, fur, bone };
+  });
+  return { eyes, middle: best.middle, faceDir, turn, up };
+}
+
+// 눈꺼풀: 털색 반구를 눈 위쪽에 매달아 두고, 위에서 아래로 늘려서 눈을 덮어요.
+function makeEyelids(face) {
+  return face.eyes.map((eye) => {
+    const r = eye.radius * 1.15;
+    const z = eye.normal;
+    const y = face.up.clone().addScaledVector(z, -face.up.dot(z)).normalize();
+    const x = new THREE.Vector3().crossVectors(y, z);
+    const pivot = new THREE.Object3D();
+    pivot.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
+    pivot.position.copy(eye.center).addScaledVector(y, r).addScaledVector(z, r * 0.05);
+    pivot.updateMatrixWorld();
+    const geo = new THREE.SphereGeometry(r, 16, 10);
+    geo.scale(1, 1, 0.42);
+    geo.translate(0, -r, 0);
+    const shade = 0.9 / 255; // 눈 둘레 털보다 살짝 어둡게 해서 눈두덩처럼 보이게 해요
+    const color = new THREE.Color().setRGB(eye.fur[0] * shade, eye.fur[1] * shade, eye.fur[2] * shade, THREE.SRGBColorSpace);
+    pivot.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color, roughness: 1 })));
+    eye.bone.attach(pivot);
+    pivot.scale.y = 0.001;
+    pivot.visible = false;
+    return pivot;
+  });
 }
 
 /* ---------- 임시 강아지 (도형으로 만든 강아지) ---------- */
@@ -399,6 +722,9 @@ const HIP_Z = 0.24; // 앞다리·뒷다리 위치 (앞뒤)
 const SIT_TILT = 0.45; // 앉을 때 몸을 세우는 각도
 const SIT_DROP = 0.217; // 앉을 때 엉덩이가 내려가는 정도
 const BACK_LEG_SIT = -0.73; // 앉을 때 뒷다리를 앞으로 접는 각도
+const LIE_DROP = 0.285; // 엎드릴 때 몸이 내려가는 정도 (배가 땅에 닿아요)
+const LIE_FRONT = -1.45; // 엎드릴 때 앞다리를 앞으로 뻗는 각도
+const LIE_BACK = -1.4; // 엎드릴 때 뒷다리를 접는 각도
 
 function makeStarShape(outer, inner) {
   const shape = new THREE.Shape();
@@ -524,55 +850,56 @@ function makeToyDogRig(config) {
   inner.add(tailWag);
 
   const unitLength = 1.05; // 코끝부터 꼬리까지 길이
-  dog.scale.setScalar(config.bodyLength / unitLength);
+  const unit = config.bodyLength / unitLength;
+  dog.scale.setScalar(unit);
 
   let phase = 0;
   let wagPhase = 0;
   let time = 0;
-  let blinkTimer = 2;
-  let blinkLeft = 0;
 
   return {
     object: dog,
+    headPosition: new THREE.Vector3(0, 0.8 * unit, 0.45 * unit),
     isPlaceholder: true,
-    update(dt, motion) {
+    update(dt, motion, expression) {
       time += dt;
       const walk = clamp01(motion.speed / motion.walkSpeed);
       const s = smooth(motion.sit);
+      const l = smooth(motion.lie);
+      const z = smooth(motion.sleep);
+      const sn = smooth(motion.sniff);
       phase += dt * motion.speed * 13;
 
-      // 대각선 다리끼리 같이 움직이는 종종걸음
-      const swing = Math.sin(phase) * 0.6 * walk * (1 - s);
-      legs.fl.rotation.x = swing + SIT_TILT * s;
-      legs.br.rotation.x = swing + BACK_LEG_SIT * s;
-      legs.fr.rotation.x = -swing + SIT_TILT * s;
-      legs.bl.rotation.x = -swing + BACK_LEG_SIT * s;
+      // 대각선 다리끼리 같이 움직이는 종종걸음 + 자세에 맞춰 다리 접기
+      const swing = Math.sin(phase) * 0.6 * walk * (1 - Math.max(s, l));
+      legs.fl.rotation.x = swing + SIT_TILT * s + LIE_FRONT * l;
+      legs.fr.rotation.x = -swing + SIT_TILT * s + LIE_FRONT * l;
+      legs.br.rotation.x = swing + BACK_LEG_SIT * s + LIE_BACK * l;
+      legs.bl.rotation.x = -swing + BACK_LEG_SIT * s + LIE_BACK * l;
+      legs.bl.rotation.z = 0.35 * l; // 엎드리면 뒷다리를 옆으로 살짝 벌려요
+      legs.br.rotation.z = -0.35 * l;
 
-      // 몸: 걸을 때 통통, 앉을 때 엉덩이를 내리고 몸을 세움, 쉴 때는 숨쉬기
-      torso.position.y = HIP_Y - SIT_DROP * s + Math.abs(Math.cos(phase)) * 0.018 * walk;
-      torso.rotation.x = -SIT_TILT * s;
+      // 몸: 걸을 때 통통, 앉으면 엉덩이를 내리고 세우고, 엎드리면 배를 땅에 대요. 쉴 때는 숨쉬기
+      torso.position.y = HIP_Y - SIT_DROP * s - LIE_DROP * l + Math.abs(Math.cos(phase)) * 0.018 * walk;
+      torso.rotation.x = -SIT_TILT * s + 0.06 * sn;
       torso.rotation.z = Math.sin(phase) * 0.03 * walk;
-      body.scale.y = 0.92 * (1 + Math.sin(time * 2.4) * 0.015);
+      body.scale.y = 0.92 * (1 + Math.sin(time * (2.4 - 1.2 * z)) * (0.015 + 0.015 * z));
 
-      // 머리: 걸을 때 끄덕끄덕, 앉아 있을 때 천천히 두리번
-      head.rotation.x = SIT_TILT * 0.6 * s + Math.sin(phase * 2) * 0.04 * walk;
-      head.rotation.y = Math.sin(time * 0.7) * 0.45 * s + Math.sin(time * 0.9) * 0.08 * (1 - s);
+      // 머리: 시선 + 킁킁(코를 땅에 대고 끄덕) + 낮잠(고개를 떨궈요)
+      const sniffNod = sn * (0.65 + Math.sin(time * 14) * 0.06);
+      head.rotation.x =
+        SIT_TILT * 0.6 * s + sniffNod + 0.5 * z - 0.1 * l * (1 - z) + expression.pitch * (1 - sn) + Math.sin(phase * 2) * 0.04 * walk;
+      head.rotation.y = expression.yaw * (1 - 0.6 * sn) + sn * Math.sin(time * 3) * 0.25 + 0.35 * z;
 
       // 꼬리 살랑살랑, 귀 팔랑팔랑
-      wagPhase += dt * (5 + 6 * walk);
-      tailWag.rotation.y = Math.sin(wagPhase) * 0.45;
-      tailTilt.rotation.x = -0.8 - 0.75 * s;
+      wagPhase += dt * (5 + 6 * walk) * (1 - 0.6 * z);
+      tailWag.rotation.y = Math.sin(wagPhase) * 0.45 * (1 - 0.85 * z);
+      tailTilt.rotation.x = -0.8 - 0.75 * s - 0.85 * l;
       earL.rotation.z = 0.3 + Math.sin(phase * 2) * 0.12 * walk;
       earR.rotation.z = -earL.rotation.z;
 
-      // 가끔 눈 깜빡
-      blinkTimer -= dt;
-      if (blinkTimer <= 0) {
-        blinkLeft = 0.14;
-        blinkTimer = 2.5 + Math.random() * 3.5;
-      }
-      blinkLeft -= dt;
-      eyes.scale.y = blinkLeft > 0 ? 0.15 : 1;
+      // 눈 깜빡
+      eyes.scale.y = 1 - 0.85 * expression.closed;
     },
   };
 }

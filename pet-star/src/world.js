@@ -15,6 +15,14 @@ const COLORS = {
   pine: [0x4fa173, 0x459669],
   rock: [0xcac3d6, 0xbdb6cc],
   cloud: 0xffffff,
+  houseWall: 0xf6e4c6,
+  houseRoof: 0xe98585,
+  houseTrim: 0xffffff,
+  houseDoor: 0x5b4652,
+  houseFloor: 0xd9b48c,
+  cushion: 0xffc3d3,
+  bowl: 0x8ec5ff,
+  plateInk: '#43354a',
   skyTop: 0x86bdf0,
   skyHorizon: 0xfde6d3,
   skyBottom: 0xf5c7d6,
@@ -237,6 +245,82 @@ function makeCloudLayer(radius, rand, count) {
   return layer;
 }
 
+// 별이의 집: 크림색 벽, 산호색 지붕, 둥근 문, 이름 문패, 문 앞 방석과 밥그릇
+function makeHouse(petName) {
+  const parts = [];
+  const add = (geometry, color, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0) => {
+    geometry.rotateX(rx);
+    geometry.rotateY(ry);
+    geometry.rotateZ(rz);
+    geometry.translate(x, y, z);
+    parts.push(part(geometry, color));
+  };
+  const W = 1.7; // 폭
+  const D = 1.45; // 깊이
+  const H = 1.15; // 벽 높이
+  add(new THREE.BoxGeometry(W + 0.2, 0.12, D + 0.2), COLORS.houseFloor, 0, 0.06, 0);
+  add(new THREE.BoxGeometry(W, H, D), COLORS.houseWall, 0, 0.12 + H / 2, 0);
+  // 박공 지붕: 비스듬한 판 두 장과 용마루
+  const slope = 0.62;
+  const half = W / 2 / Math.cos(slope) + 0.12;
+  const peak = Math.tan(slope) * (W / 2); // 앞벽 삼각형 높이
+  const roofY = 0.12 + H + peak / 2 + 0.06;
+  add(new THREE.BoxGeometry(half, 0.1, D + 0.3), COLORS.houseRoof, -W / 4 - 0.02, roofY, 0, 0, 0, slope);
+  add(new THREE.BoxGeometry(half, 0.1, D + 0.3), COLORS.houseRoof, W / 4 + 0.02, roofY, 0, 0, 0, -slope);
+  add(new THREE.BoxGeometry(0.14, 0.14, D + 0.34), COLORS.houseTrim, 0, 0.12 + H + peak + 0.1, 0);
+  // 앞벽 삼각형(지붕 아래)
+  const gable = new THREE.Shape();
+  gable.moveTo(-W / 2, 0);
+  gable.lineTo(W / 2, 0);
+  gable.lineTo(0, peak);
+  gable.closePath();
+  const gableGeo = new THREE.ExtrudeGeometry(gable, { depth: D - 0.02, bevelEnabled: false });
+  add(gableGeo, COLORS.houseWall, 0, 0.12 + H, -(D - 0.02) / 2);
+  // 둥근 문
+  const door = new THREE.Shape();
+  const dw = 0.42;
+  const dh = 0.56;
+  door.moveTo(-dw, 0);
+  door.lineTo(dw, 0);
+  door.lineTo(dw, dh);
+  door.absarc(0, dh, dw, 0, Math.PI, false);
+  door.closePath();
+  add(new THREE.ExtrudeGeometry(door, { depth: 0.02, bevelEnabled: false, curveSegments: 10 }), COLORS.houseDoor, 0, 0.12, D / 2);
+  // 문 앞 방석과 밥그릇
+  add(new THREE.CylinderGeometry(0.66, 0.7, 0.08, 14), COLORS.cushion, 0, 0.04, D / 2 + 0.82);
+  add(new THREE.CylinderGeometry(0.17, 0.13, 0.11, 10), COLORS.bowl, W / 2 + 0.25, 0.055, D / 2 + 0.25);
+
+  const group = new THREE.Group();
+  group.add(new THREE.Mesh(mergeGeometries(parts), lowPoly({ vertexColors: true })));
+
+  // 문패: 글자를 그림으로 그려서 문 위에 붙여요.
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 96;
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const drawPlate = () => {
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fffaf3';
+    ctx.beginPath();
+    ctx.roundRect(4, 4, 248, 88, 26);
+    ctx.fill();
+    ctx.fillStyle = COLORS.plateInk;
+    ctx.font = '700 46px "Gowun Batang", "AppleMyungjo", serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`${petName}네 집`, 128, 52);
+    texture.needsUpdate = true;
+  };
+  drawPlate();
+  document.fonts?.load('700 46px "Gowun Batang"').then(drawPlate, () => {});
+  const plate = new THREE.Mesh(new THREE.PlaneGeometry(0.66, 0.25), new THREE.MeshBasicMaterial({ map: texture }));
+  plate.position.set(0, 0.12 + H + 0.17, D / 2 + 0.025);
+  group.add(plate);
+
+  return { group, spotOffset: D / 2 + 0.82, radius: 1.25 };
+}
+
 // 하늘: 위는 하늘색, 지평선은 복숭아빛, 아래는 분홍빛으로 번지는 둥근 막
 function makeSky() {
   const material = new THREE.ShaderMaterial({
@@ -274,9 +358,28 @@ function makeSky() {
   return sky;
 }
 
-export function createWorld(scene, { radius, seed }) {
+// 별 표면의 한 방향(dir)에 서서 앞쪽(front)을 보는 자세
+function standOn(object, dir, front, radius) {
+  const left = new THREE.Vector3().crossVectors(dir, front);
+  object.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(left, dir, front));
+  object.position.copy(dir).multiplyScalar(radius);
+}
+
+export function createWorld(scene, { radius, seed, petName }) {
   const rand = seededRandom(seed);
   const obstacles = [];
+
+  // 별이의 집: 처음 서 있는 곳(별 꼭대기)에서 조금 떨어진 곳, 문은 꼭대기 쪽을 봐요.
+  const house = makeHouse(petName);
+  const houseDir = new THREE.Vector3(0, Math.cos(0.42), Math.sin(0.42));
+  const houseFront = UP.clone().addScaledVector(houseDir, -UP.dot(houseDir)).normalize();
+  standOn(house.group, houseDir, houseFront, radius - 0.03);
+  const spotAngle = house.spotOffset / radius;
+  const home = {
+    dir: houseDir,
+    spot: houseDir.clone().multiplyScalar(Math.cos(spotAngle)).addScaledVector(houseFront, Math.sin(spotAngle)).normalize(),
+  };
+  obstacles.push({ dir: houseDir, radius: house.radius, isHome: true });
 
   const sky = makeSky();
   const planet = makePlanet(radius, rand);
@@ -289,7 +392,7 @@ export function createWorld(scene, { radius, seed }) {
   // 빛은 카메라를 따라다녀서, 별 어디를 보든 아이가 밝게 보여요.
   const hemi = new THREE.HemisphereLight(0xfff4ea, 0x8fbf98, 1.5);
   const sun = new THREE.DirectionalLight(0xfff0dc, 2.2);
-  scene.add(sky, planet, props, grass, flowers, clouds, hemi, sun);
+  scene.add(sky, planet, props, grass, flowers, clouds, house.group, hemi, sun);
 
   const right = new THREE.Vector3();
   const up = new THREE.Vector3();
@@ -313,5 +416,5 @@ export function createWorld(scene, { radius, seed }) {
     if (!reduceMotion) clouds.rotateOnAxis(cloudAxis, dt * 0.012);
   }
 
-  return { update, obstacles, radius };
+  return { update, obstacles, radius, home };
 }

@@ -48,12 +48,13 @@ const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
 // 처음에는 멀리서 시작해서 아이 곁으로 천천히 날아가요.
 camera.position.set(0, 26, 20);
 
-const world = createWorld(scene, { radius: WORLD.planetRadius, seed: WORLD.seed });
+const world = createWorld(scene, { radius: WORLD.planetRadius, seed: WORLD.seed, petName: PET.name });
 const brain = createBrain({
   behaviors: BEHAVIORS,
   walkSpeed: PET.walkSpeed,
   radius: WORLD.planetRadius,
   obstacles: world.obstacles,
+  home: world.home,
 });
 const cameraRig = createCameraRig(camera, canvas, {
   planetRadius: WORLD.planetRadius,
@@ -98,13 +99,13 @@ renderer.setAnimationLoop(() => {
   if (pet) {
     brain.update(dt);
     brain.applyTo(pet.root);
-    pet.update(dt, brain.motion);
+    pet.update(dt, brain.motion, camera.position);
     if (brain.label !== shownLabel) {
       shownLabel = brain.label;
       statusEl.textContent = shownLabel;
     }
   }
-  cameraRig.update(dt, brain.normal);
+  cameraRig.update(dt, brain.normal, world.home);
   world.update(dt, camera);
   renderer.render(scene, camera);
 });
